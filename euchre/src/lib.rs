@@ -1,29 +1,47 @@
 pub mod card;
 use card::{Card, Suit};
 
-pub struct TeamPlay {
-    pub player0: Option<Card>,
-    pub player1: Option<Card>,
+pub struct TeamPlay<'a> {
+    pub player0: Option<&'a Card>,
+    pub player1: Option<&'a Card>,
 }
-impl TeamPlay {
-    pub fn highest_card(&self, solver: &impl CardSolver) -> Option<Card> {
-        match (self.player0.as_ref(), self.player1.as_ref()) {
-            (None, None) => None,
-            (None, Some(b)) => Some(b.clone()),
-            (Some(a), None) => Some(a.clone()),
-            (Some(a), Some(b)) => match solver.test(a, b) {
-                Some(lr) => match lr {
-                    LeftRight::Left => Some(a.clone()),
-                    LeftRight::Right => Some(b.clone()),
-                },
-                None => None,
-            },
-        }
+
+pub fn best_optional_card_lr(
+    solver: &impl CardSolver,
+    left: Option<&Card>,
+    right: Option<&Card>,
+) -> Option<LeftRight> {
+    match (left, right) {
+        (Some(a), Some(b)) => match solver.test(a, b) {
+            Some(lr) => Some(lr),
+            None => None,
+        },
+        (Some(_), None) => Some(LeftRight::Left),
+        (None, Some(_)) => Some(LeftRight::Right),
+        (None, None) => None,
     }
 }
 
-pub trait HandSolver {
-    fn test(&self, team0: &TeamPlay, team1: &TeamPlay) -> LeftRight;
+pub fn best_optional_card<'a>(
+    solver: &impl CardSolver,
+    left: Option<&'a Card>,
+    right: Option<&'a Card>,
+) -> Option<&'a Card> {
+    match best_optional_card_lr(solver, left, right) {
+        Some(LeftRight::Left) => left,
+        Some(LeftRight::Right) => right,
+        None => None,
+    }
+}
+
+pub fn winning_team(
+    solver: &impl CardSolver,
+    left: &TeamPlay,
+    right: &TeamPlay,
+) -> Option<LeftRight> {
+    let best_left = best_optional_card(solver, left.player0, left.player1);
+    let best_right = best_optional_card(solver, right.player0, right.player1);
+    best_optional_card_lr(solver, best_left, best_right)
 }
 
 #[derive(Debug, PartialEq)]
@@ -36,57 +54,82 @@ pub trait CardSolver {
     fn test(&self, card0: &Card, card1: &Card) -> Option<LeftRight>;
 }
 
-pub struct HandParams {
-    pub lead: Card,
+pub struct HandParams<'a> {
+    lead: &'a Card,
+    trump: Suit,
 }
-impl HandParams {
-    pub fn suit_of_card_played(&self, card: &Card) -> Suit {
-        // If the card is the jack of the opposite bower, then it is our suit
-        if card.is_jack() && card.suit() == &self.lead.suit().opposite_color() {
-            self.suit().clone()
+
+impl<'a> HandParams<'a> {
+    /// The suit leading the hand.  This is not necessarily the suit of the lead card.
+    pub fn suit_lead(&self) -> &Suit {
+        if self.lead.is_jack() && self.lead.suit().opposite_color() == self.trump {
+            return &self.trump;
         } else {
-            card.suit().clone()
+            return self.lead.suit();
         }
     }
-    fn suit(&self) -> &Suit {
-        self.lead.suit()
+
+    pub fn is_right_bower(&self, card: &Card) -> bool {
+        card.is_jack() && card.suit() == &self.trump
+    }
+
+    pub fn is_left_bower(&self, card: &Card) -> bool {
+        card.is_jack() && card.suit() == &self.trump.opposite_color()
     }
 }
 
-impl CardSolver for HandParams {
+impl<'a> CardSolver for HandParams<'a> {
     fn test(&self, left_card: &Card, right_card: &Card) -> Option<LeftRight> {
-        let left_suit = self.suit_of_card_played(left_card);
-        let right_suit = self.suit_of_card_played(right_card);
+        // Check for right or left bowers
+        if self.is_right_bower(left_card) {
+            return Some(LeftRight::Left);
+        }
+        if self.is_right_bower(right_card) {
+            return Some(LeftRight::Right);
+        }
+        if self.is_left_bower(left_card) {
+            return Some(LeftRight::Left);
+        }
+        if self.is_left_bower(right_card) {
+            return Some(LeftRight::Right);
+        }
+
+        // Check for trump
+        match (
+            left_card.suit() == &self.trump,
+            right_card.suit() == &self.trump,
+        ) {
+            (true, true) => {
+                // Both cards are trump, compare ranks (no jacks)
+                if left_card.rank() > right_card.rank() {
+                    return Some(LeftRight::Left);
+                } else if left_card.rank() < right_card.rank() {
+                    return Some(LeftRight::Right);
+                } else {
+                    // Cannot have equal ranks and suits, but we will say neither wins
+                    return None;
+                }
+            }
+            (true, false) => return Some(LeftRight::Left),
+            (false, true) => return Some(LeftRight::Right),
+            // Neither trump, check for following suit
+            (false, false) => {}
+        }
+
         // Check for following suit
         match (
-            self.lead.suit() == &left_suit,
-            self.lead.suit() == &right_suit,
+            self.suit_lead() == left_card.suit(),
+            self.suit_lead() == right_card.suit(),
         ) {
             // Both cards follow suit
-            // Check for jacks
-            (true, true) => match (left_card.is_jack(), right_card.is_jack()) {
-                (true, true) => {
-                    // Both jacks, the same suit wins
-                    if left_card.suit() == self.suit() {
-                        Some(LeftRight::Left)
-                    } else {
-                        Some(LeftRight::Right)
-                    }
+            // We have no jacks to worry about, so it's just rank.
+            (true, true) => {
+                if left_card.rank() > right_card.rank() {
+                    Some(LeftRight::Left)
+                } else {
+                    Some(LeftRight::Right)
                 }
-                (true, false) => Some(LeftRight::Left),
-                (false, true) => Some(LeftRight::Right),
-                (false, false) => {
-                    // Neither are jacks, compare ranks
-                    if left_card.rank() > right_card.rank() {
-                        Some(LeftRight::Left)
-                    } else if left_card.rank() < right_card.rank() {
-                        Some(LeftRight::Right)
-                    } else {
-                        // Cannot have equal ranks and suits, but we will say neither wins
-                        None
-                    }
-                }
-            },
+            }
             // Only one or none follow suit, easy
             (true, false) => Some(LeftRight::Left),
             (false, true) => Some(LeftRight::Right),
@@ -103,7 +146,8 @@ mod tests {
     #[test]
     fn test_highest_card() {
         let solver = HandParams {
-            lead: Card::new(Suit::Hearts, 10).unwrap(),
+            lead: &Card::new(Suit::Hearts, 10).unwrap(),
+            trump: Suit::Hearts,
         };
 
         // Follow suit, left wins
@@ -141,7 +185,7 @@ mod tests {
             Some(LeftRight::Left)
         );
 
-        // Bower wins over ace
+        // Right Bower wins over ace
         assert_eq!(
             solver.test(
                 &Card::new_special(Suit::Hearts, card::Special::Jack),
@@ -149,5 +193,48 @@ mod tests {
             ),
             Some(LeftRight::Left)
         );
+
+        // Left Bower wins over ace
+        assert_eq!(
+            solver.test(
+                &Card::new_special(Suit::Diamonds, card::Special::Jack),
+                &Card::new_special(Suit::Hearts, card::Special::Ace)
+            ),
+            Some(LeftRight::Left)
+        );
+
+        // 2 of trump wins over non-trump
+        assert_eq!(
+            solver.test(
+                &Card::new(Suit::Hearts, 2).unwrap(),
+                &Card::new_special(Suit::Spades, card::Special::Jack),
+            ),
+            Some(LeftRight::Left)
+        );
+    }
+
+    #[test]
+    fn test_hand_solve() {
+        let player0 = Card::new(Suit::Hearts, 9).unwrap();
+        let player1 = Card::new(Suit::Diamonds, 9).unwrap();
+        let player2 = Card::new(Suit::Spades, 9).unwrap();
+        let player3 = Card::new(Suit::Clubs, 9).unwrap();
+
+        let team0 = TeamPlay {
+            player0: Some(&player0),
+            player1: Some(&player1),
+        };
+        let team1 = TeamPlay {
+            player0: Some(&player2),
+            player1: Some(&player3),
+        };
+
+        let solver = HandParams {
+            lead: team0.player0.as_ref().unwrap(),
+            trump: Suit::Hearts,
+        };
+
+        // team0 (left) wins
+        assert_eq!(winning_team(&solver, &team0, &team1), Some(LeftRight::Left));
     }
 }
