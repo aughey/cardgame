@@ -110,6 +110,7 @@ impl<'a> CardSolver for HandParams<'a> {
                     return None;
                 }
             }
+            // One is trump, it's that one
             (true, false) => return Some(LeftRight::Left),
             (false, true) => return Some(LeftRight::Right),
             // Neither trump, check for following suit
@@ -145,6 +146,7 @@ mod tests {
 
     #[test]
     fn test_highest_card() {
+        // Hearts is trump, leading with hearts.
         let solver = HandParams {
             lead: &Card::new(Suit::Hearts, 10).unwrap(),
             trump: Suit::Hearts,
@@ -210,6 +212,15 @@ mod tests {
                 &Card::new_special(Suit::Spades, card::Special::Jack),
             ),
             Some(LeftRight::Left)
+        );
+
+        // If neither follows suit, then neither wins.
+        assert_eq!(
+            solver.test(
+                &Card::new(Suit::Diamonds, 10).unwrap(),
+                &Card::new(Suit::Spades, 10).unwrap()
+            ),
+            None
         );
     }
 
