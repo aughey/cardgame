@@ -16,13 +16,22 @@ impl Suit {
             Suit::Clubs => Suit::Spades,
         }
     }
+    pub fn iter() -> impl Iterator<Item = Suit> {
+        [Suit::Spades, Suit::Hearts, Suit::Diamonds, Suit::Clubs].into_iter()
+    }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Special {
     Jack,
     Queen,
     King,
     Ace,
+}
+impl Special {
+    pub fn iter() -> impl Iterator<Item = Special> {
+        [Special::Jack, Special::Queen, Special::King, Special::Ace].into_iter()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
